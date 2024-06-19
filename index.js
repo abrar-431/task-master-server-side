@@ -5,6 +5,10 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 5000;
 
+// Middlewares
+app.use(cors())
+app.use(express.json())
+
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.a1obszd.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
@@ -24,6 +28,18 @@ async function run() {
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
+
+    const featuresCollection = client.db("TaskMaster").collection('features');
+    const reviewsCollection = client.db("TaskMaster").collection('reviews');
+
+    app.get('/features', async(req, res)=>{
+        const result = await featuresCollection.find().toArray();
+        res.send(result);
+    })
+    app.get('/reviews', async(req, res)=>{
+        const result = await reviewsCollection.find().toArray();
+        res.send(result);
+    })
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
@@ -38,3 +54,6 @@ app.get('/', (req, res)=>{
 app.listen(port, ()=>{
     console.log(`Task Master server is running on port ${port}`)
 })
+
+
+  
