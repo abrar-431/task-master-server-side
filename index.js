@@ -135,24 +135,41 @@ async function run() {
       await notificationCollection.insertOne(welcomeNotification);
       res.send(result);
     })
+    app.get('/users/admin/:email',verifyToken, async(req, res)=>{
+      const email = req.params.email;
+      if(email !== req.decoded.email){
+        return res.status(403).send({message: 'Forbidden access'})
+      }
+      const query = {email: email};
+      const user = await userCollection.findOne(query);
+      let admin = false;
+      if(user){
+        admin = user?.role==='Admin';
+      }
+      res.send({admin});
+    })
+    app.get('/users/worker',verifyToken, verifyAdmin, async (req, res) => {
+        const result = await userCollection.find({ role: 'Worker' }).toArray();
+        res.send(result);
+    });
     app.delete('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const result = await userCollection.deleteOne(query);
       res.send(result);
     })
-    app.patch('/users/admin/:id', verifyToken, verifyAdmin, async (req, res) => {
+    app.put('/users/:id/update-role', verifyToken, verifyAdmin, async (req, res) => {
       const id = req.params.id;
       const filter = { _id: new ObjectId(id) };
-      const user = req.body;
+      const { newRole } = req.body; // Assuming newRole is passed in the request body
       const updatedUser = {
         $set: {
-          role: 'admin'
+          role: newRole // Update role dynamically based on newRole in the request body
         }
-      }
-      const result = await userCollection.updateOne(filter, updatedUser);
-      res.send(result);
-    })
+      };
+        const result = await userCollection.updateOne(filter, updatedUser);
+        res.send(result);
+    });
     // Decrease User Coin by email
     app.patch('/coin/decrease/:email', async (req, res) => {
       const email = req.params.email;
