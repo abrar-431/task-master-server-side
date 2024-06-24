@@ -285,7 +285,7 @@ async function run() {
       }
     });
 
-    app.get('/submissions/worker/:email', async (req, res) => {
+    app.get('/submissions/worker/:email',verifyToken, verifyWorker, async (req, res) => {
       const email = req.params.email;
       const query = { worker_email: email }
       const result = await submissionCollection.find(query).toArray();
@@ -294,12 +294,8 @@ async function run() {
 
     app.get('/submissions/approved/:email', async (req, res) => {
       const email = req.params.email;
-      try {
-        const submissions = await submissionCollection.find({ worker_email: email, status: 'approved' }).toArray();
-        res.send(submissions);
-      } catch (error) {
-        res.status(500).send({ message: 'Error fetching submissions', error });
-      }
+        const result = await submissionCollection.find({ worker_email: email, status: 'approved' }).toArray();
+        res.send(result);
     });
 
     app.patch('/submissions/:id', async (req, res) => {
