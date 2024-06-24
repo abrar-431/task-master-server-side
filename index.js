@@ -275,63 +275,51 @@ async function run() {
       res.send(result);
     });
 
-    app.get('/submissions/creator/:email', async (req, res) => {
+    app.get('/submissions/creator/:email', verifyToken, verifyTaskCreator, async (req, res) => {
       const email = req.params.email;
-      try {
-        const submissions = await submissionCollection.find({ creator_email: email, status: 'pending' }).toArray();
-        res.send(submissions);
-      } catch (error) {
-        res.status(500).send({ message: 'Error fetching submissions', error });
-      }
+      const result = await submissionCollection.find({ creator_email: email, status: 'pending' }).toArray();
+      res.send(result);
     });
 
-    app.get('/submissions/worker/:email',verifyToken, verifyWorker, async (req, res) => {
+    app.get('/submissions/worker/:email', verifyToken, verifyWorker, async (req, res) => {
       const email = req.params.email;
       const query = { worker_email: email }
       const result = await submissionCollection.find(query).toArray();
       res.send(result);
     });
 
-    app.get('/submissions/approved/:email', async (req, res) => {
+    app.get('/submissions/approved/:email', verifyToken, verifyWorker, async (req, res) => {
       const email = req.params.email;
-        const result = await submissionCollection.find({ worker_email: email, status: 'approved' }).toArray();
-        res.send(result);
+      const result = await submissionCollection.find({ worker_email: email, status: 'approved' }).toArray();
+      res.send(result);
     });
 
     app.patch('/submissions/:id', async (req, res) => {
       const id = req.params.id;
       const { status } = req.body;
+      const submission = await submissionCollection.findOne({ _id: new ObjectId(id) });
 
-      try {
-        const submission = await submissionCollection.findOne({ _id: new ObjectId(id) });
-        if (!submission) {
-          return res.status(404).send({ message: 'Submission not found' });
-        }
+      const result = await submissionCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { status: status } }
+      );
 
-        await submissionCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { status: status } }
+      // Insert a notification for the worker
+      const notification = {
+        to_email: submission.worker_email,
+        message: `Your submission for task ${submission.task_title} has been ${status}.`,
+        date: new Date().toISOString()
+      };
+      await notificationCollection.insertOne(notification);
+
+      if (status === 'approved') {
+        await userCollection.updateOne(
+          { email: submission.worker_email },
+          { $inc: { coin: submission.payable_amount } }
         );
-
-        // Insert a notification for the worker
-        const notification = {
-          email: submission.worker_email,
-          message: `Your submission for task ${submission.task_title} has been ${status}.`,
-          date: new Date().toISOString()
-        };
-        await notificationCollection.insertOne(notification);
-
-        if (status === 'approved') {
-          await userCollection.updateOne(
-            { email: submission.worker_email },
-            { $inc: { coin: submission.payable_amount } }
-          );
-        }
-
-        res.send({ message: 'Submission status updated successfully' });
-      } catch (error) {
-        res.status(500).send({ message: 'Error updating submission status', error });
       }
+
+      res.send(result);
     });
     // jwt related api
     app.post('/jwt', async (req, res) => {
