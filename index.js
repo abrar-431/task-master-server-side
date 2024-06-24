@@ -217,7 +217,7 @@ async function run() {
       );
       res.send(result);
     });
-    app.delete('/tasks/:id', verifyToken, verifyTaskCreator, async (req, res) => {
+    app.delete('/tasks/:id', verifyToken, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const task = await taskCollection.findOne(query);
