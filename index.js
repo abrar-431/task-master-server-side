@@ -148,6 +148,48 @@ async function run() {
       }
       res.send({admin});
     })
+    app.get('/top-user', async (req, res) => {
+        const topUsers = await submissionCollection.aggregate([
+          {
+            $match: { status: 'approved' }
+          },
+          {
+            $group: {
+              _id: "$worker_email",
+              tasks_completed: { $sum: 1 }
+            }
+          },
+          {
+            $lookup: {
+              from: "users",
+              localField: "_id",
+              foreignField: "email",
+              as: "user_info"
+            }
+          },
+          {
+            $unwind: "$user_info"
+          },
+          {
+            $project: {
+              _id: 0,
+              email: "$_id",
+              name: "$user_info.name",
+              picture: "$user_info.photo",
+              coins: "$user_info.coin",
+              tasks_completed: 1
+            }
+          },
+          {
+            $sort: { coins: -1 }
+          },
+          {
+            $limit: 6
+          }
+        ]).toArray();
+    
+        res.send(topUsers);
+    });
     app.get('/users/worker',verifyToken, verifyAdmin, async (req, res) => {
         const result = await userCollection.find({ role: 'Worker' }).toArray();
         res.send(result);
@@ -199,7 +241,7 @@ async function run() {
       const email = req.params.email;
       const query = { creator_email: email };
       const tasks = await taskCollection.find(query).sort({ created_at: -1 }).toArray();
-      res.status(200).json(tasks);
+      res.send(tasks);
     });
     app.get('/tasks/:id', async (req, res) => {
       const id = req.params.id;
@@ -233,7 +275,12 @@ async function run() {
     });
     // tasks with taskCount > 0
     app.get('/tasks', verifyToken, async (req, res) => {
-      const result = await taskCollection.find({ task_quantity: { $gt: 0 } }).toArray();
+      const page = parseInt(req.query.page);
+      const size = parseInt(req.query.size);
+      const result = await taskCollection.find({ task_quantity: { $gt: 0 } })
+      .skip(page*size)
+      .limit(size)
+      .toArray();
       res.send(result);
     });
 
