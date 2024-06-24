@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 5000;
@@ -41,10 +41,10 @@ async function run() {
     const userCollection = client.db("TaskMaster").collection('users');
     const taskCollection = client.db("TaskMaster").collection('tasks');
     const notificationCollection = client.db("TaskMaster").collection('notifications');
+    const submissionCollection = client.db("TaskMaster").collection('submissions');
 
     // middlewares
     const verifyToken = (req, res, next) => {
-      console.log(req.headers.authorization)
       if (!req.headers.authorization) {
         return res.status(401).send({ message: 'Unauthorized' });
       }
@@ -54,7 +54,6 @@ async function run() {
           return res.status(401).send({ message: 'Unauthorized' });
         }
         req.decoded = decoded;
-        console.log(decoded)
         next();
       })
     }
@@ -128,6 +127,12 @@ async function run() {
         return res.send({ message: 'user exists', insertedId: null });
       }
       const result = await userCollection.insertOne(user);
+      const welcomeNotification = {
+        to_email: user.email,
+        current_time: new Date().toISOString(),
+        message: `Welcome ${user.name}!`
+      };
+      await notificationCollection.insertOne(welcomeNotification);
       res.send(result);
     })
     app.delete('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
@@ -152,7 +157,6 @@ async function run() {
     app.patch('/coin/decrease/:email', async (req, res) => {
       const email = req.params.email;
       const { totalCost } = req.body;
-      console.log(totalCost, typeof totalCost)
 
       const result = await userCollection.updateOne(
         { email: email },
@@ -169,50 +173,62 @@ async function run() {
     });
 
     // Task Collection related api
-    app.post('/tasks', async (req, res) => {
+    app.post('/tasks', verifyToken, verifyTaskCreator, async (req, res) => {
       const newTask = req.body;
       const result = await taskCollection.insertOne(newTask);
       res.send(result);
     });
-
-    // GET all tasks with taskCount > 0
-    app.get('/tasks', async (req, res) => {
-      try {
-        const tasks = await db.collection('taskCollection').find({ task_quantity: { $gt: 0 } }).toArray();
-        res.status(200).json(tasks);
-      } catch (err) {
-        res.status(500).json({ error: err.message });
-      }
+    app.get('/tasks/user/:email', verifyToken, verifyTaskCreator, async (req, res) => {
+      const email = req.params.email;
+      const query = { creator_email: email };
+      const tasks = await taskCollection.find(query).sort({ created_at: -1 }).toArray();
+      res.status(200).json(tasks);
     });
-
-    // GET specific task by ID
     app.get('/tasks/:id', async (req, res) => {
-      try {
-        const task = await db.collection('taskCollection').findOne({ _id: new ObjectId(req.params.id) });
-        if (!task) return res.status(404).send('Task not found');
-        res.status(200).json(task);
-      } catch (err) {
-        res.status(500).json({ error: err.message });
-      }
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await taskCollection.findOne(query);
+      res.send(result);
+    })
+    app.put('/tasks/:id', verifyToken, verifyTaskCreator, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const { task_title, task_quantity, submission_info, payable_amount, completion_date, task_detail, task_image_url } = req.body;
+      const result = await taskCollection.updateOne(
+        query,
+        { $set: { task_title, task_detail, submission_info } }
+      );
+      res.send(result);
+    });
+    app.delete('/tasks/:id', verifyToken, verifyTaskCreator, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const task = await taskCollection.findOne(query);
+      const result = await taskCollection.deleteOne(query);
+
+      const coinIncrease = task.task_quantity * task.payable_amount;
+      await userCollection.updateOne(
+        { email: task.creator_email },
+        { $inc: { coin: coinIncrease } }
+      );
+
+      res.send(result);
+    });
+    // tasks with taskCount > 0
+    app.get('/tasks', verifyToken, async (req, res) => {
+      const result = await taskCollection.find({ task_quantity: { $gt: 0 } }).toArray();
+      res.send(result);
     });
 
-    // PUT update specific task by ID
-    app.put('/tasks/:id', async (req, res) => {
-      try {
-        const updatedTask = req.body;
-        const result = await db.collection('taskCollection').updateOne(
-          { _id: new ObjectId(req.params.id) },
-          { $set: updatedTask }
-        );
-        if (result.matchedCount === 0) return res.status(404).send('Task not found');
-        res.status(200).send('Task updated');
-      } catch (err) {
-        res.status(500).json({ error: err.message });
-      }
+    // GET specific task
+    app.get('/tasks/:id', verifyToken, async (req, res) => {
+      const query = { _id: new ObjectId(req.params.id) };
+      const result = await taskCollection.findOne(query);
+      res.send(result);
     });
 
     // PATCH decrease task count by 1
-    app.patch('/task_count/decrease/:id', async (req, res) => {
+    app.patch('/task_count/decrease/:id', verifyToken, verifyTaskCreator, async (req, res) => {
       try {
         const result = await db.collection('taskCollection').updateOne(
           { _id: new ObjectId(req.params.id) },
@@ -233,31 +249,93 @@ async function run() {
         res.status(500).json({ error: err.message });
       }
     });
-
-    // DELETE specific task by ID
     app.delete('/tasks/:id', async (req, res) => {
-      try {
-        const task = await db.collection('taskCollection').findOne({ _id: new ObjectId(req.params.id) });
-        if (!task) return res.status(404).send('Task not found');
 
-        const result = await db.collection('taskCollection').deleteOne({ _id: new ObjectId(req.params.id) });
-        if (result.deletedCount === 0) return res.status(404).send('Task not found');
+      const result = await db.collection('taskCollection').deleteOne({ _id: new ObjectId(req.params.id) });
+      if (result.deletedCount === 0) return res.status(404).send('Task not found');
 
-        // Increase user coins
-        const coinIncrease = task.task_quantity * task.payable_amount;
-        // Assume you have a function or mechanism to update user coins
-        // updateUserCoins(task.creator_email, coinIncrease);
+      // Increase user coins
+      const coinIncrease = task.task_quantity * task.payable_amount;
+      // Assume you have a function or mechanism to update user coins
+      // updateUserCoins(task.creator_email, coinIncrease);
 
-        res.status(200).send('Task deleted and user coins increased');
-      } catch (err) {
-        res.status(500).json({ error: err.message });
-      }
+      res.status(200).send('Task deleted and user coins increased');
     });
     // Notification related api
-    app.get('/notifications/:email', async (req, res) => {
-        const email = req.params.email;
-        const notifications = await notificationCollection.find({ to_email: email }).sort({ current_time: -1 }).toArray();
-        res.send(notifications);
+    app.get('/notifications/:email', verifyToken, async (req, res) => {
+      const email = req.params.email;
+      const notifications = await notificationCollection.find({ to_email: email }).sort({ current_time: -1 }).toArray();
+      res.send(notifications);
+    });
+
+    // submission related api
+    app.post('/submissions', verifyToken, verifyWorker, async (req, res) => {
+      const submission = req.body;
+      const result = await submissionCollection.insertOne(submission);
+      res.send(result);
+    });
+
+    app.get('/submissions/creator/:email', async (req, res) => {
+      const email = req.params.email;
+      try {
+        const submissions = await submissionCollection.find({ creator_email: email, status: 'pending' }).toArray();
+        res.send(submissions);
+      } catch (error) {
+        res.status(500).send({ message: 'Error fetching submissions', error });
+      }
+    });
+
+    app.get('/submissions/worker/:email', async (req, res) => {
+      const email = req.params.email;
+      const query = { worker_email: email }
+      const result = await submissionCollection.find(query).toArray();
+      res.send(result);
+    });
+
+    app.get('/submissions/approved/:email', async (req, res) => {
+      const email = req.params.email;
+      try {
+        const submissions = await submissionCollection.find({ worker_email: email, status: 'approved' }).toArray();
+        res.send(submissions);
+      } catch (error) {
+        res.status(500).send({ message: 'Error fetching submissions', error });
+      }
+    });
+
+    app.patch('/submissions/:id', async (req, res) => {
+      const id = req.params.id;
+      const { status } = req.body;
+
+      try {
+        const submission = await submissionCollection.findOne({ _id: new ObjectId(id) });
+        if (!submission) {
+          return res.status(404).send({ message: 'Submission not found' });
+        }
+
+        await submissionCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: status } }
+        );
+
+        // Insert a notification for the worker
+        const notification = {
+          email: submission.worker_email,
+          message: `Your submission for task ${submission.task_title} has been ${status}.`,
+          date: new Date().toISOString()
+        };
+        await notificationCollection.insertOne(notification);
+
+        if (status === 'approved') {
+          await userCollection.updateOne(
+            { email: submission.worker_email },
+            { $inc: { coin: submission.payable_amount } }
+          );
+        }
+
+        res.send({ message: 'Submission status updated successfully' });
+      } catch (error) {
+        res.status(500).send({ message: 'Error updating submission status', error });
+      }
     });
     // jwt related api
     app.post('/jwt', async (req, res) => {
